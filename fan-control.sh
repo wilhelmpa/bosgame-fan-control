@@ -42,6 +42,10 @@ set_permissions() {
         chmod 666 "$SYSFS_BASE/$fan/rampdown_curve" 2>/dev/null
     done
     chmod 666 "$SYSFS_BASE/apu/power_mode" 2>/dev/null
+
+    # GPU performance level control
+    chmod 666 /sys/class/drm/card1/device/power_dpm_force_performance_level 2>/dev/null
+
     echo "  Permissions set"
 }
 

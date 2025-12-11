@@ -39,7 +39,7 @@ class FanControlWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.set_title("Bosgame M5 Fan Control")
-        self.set_default_size(500, 950)
+        self.set_default_size(550, 1100)
 
         # Check if ryzenadj is available
         self.has_ryzenadj = shutil.which("ryzenadj") is not None
@@ -89,6 +89,10 @@ class FanControlWindow(Adw.ApplicationWindow):
         # Curve editor card
         self.curve_card = self.create_curve_card()
         content.append(self.curve_card)
+
+        # GPU performance card
+        self.gpu_card = self.create_gpu_card()
+        content.append(self.gpu_card)
 
         # Ryzenadj tuning card (if available)
         if self.has_ryzenadj:
@@ -267,86 +271,131 @@ class FanControlWindow(Adw.ApplicationWindow):
 
         return card
 
+    def create_gpu_card(self):
+        """Create GPU performance card"""
+        card = Adw.PreferencesGroup()
+        card.set_title("GPU Performance")
+
+        # GPU Performance Level
+        gpu_row = Adw.ComboRow()
+        gpu_row.set_title("Performance Level")
+        gpu_row.set_subtitle("auto=dynamisch, high=max Takt")
+        levels = Gtk.StringList.new(["auto", "low", "high"])
+        gpu_row.set_model(levels)
+        gpu_row.connect("notify::selected", self.on_gpu_level_changed)
+        card.add(gpu_row)
+        self.gpu_level_row = gpu_row
+
+        return card
+
+    def on_gpu_level_changed(self, combo, pspec):
+        """Handle GPU performance level change"""
+        levels = ["auto", "low", "high"]
+        selected = combo.get_selected()
+        if selected < len(levels):
+            try:
+                with open("/sys/class/drm/card1/device/power_dpm_force_performance_level", "w") as f:
+                    f.write(levels[selected])
+            except PermissionError:
+                self.show_error("Keine Berechtigung",
+                    "GPU-Einstellung erfordert root.\nFühre aus: sudo chmod 666 /sys/class/drm/card1/device/power_dpm_force_performance_level")
+            except Exception as e:
+                self.show_error("Fehler", str(e))
+
     def create_tuning_card(self):
         """Create CPU/GPU tuning card with ryzenadj"""
         card = Adw.PreferencesGroup()
         card.set_title("Power Tuning (ryzenadj)")
         card.set_description("Einstellungen werden bei Neustart zurückgesetzt")
 
-        # Power Limit (STAPM)
-        power_row = Adw.ActionRow()
-        power_row.set_title("Power Limit (TDP)")
-        power_row.set_subtitle("25-120W")
+        # STAPM (Sustained Power)
+        stapm_row = Adw.ActionRow()
+        stapm_row.set_title("STAPM (Sustained)")
+        stapm_row.set_subtitle("Dauerhafte TDP")
 
-        power_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        power_box.set_valign(Gtk.Align.CENTER)
+        self.stapm_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 25, 120, 5)
+        self.stapm_scale.set_value(65)
+        self.stapm_scale.set_draw_value(True)
+        self.stapm_scale.set_value_pos(Gtk.PositionType.LEFT)
+        self.stapm_scale.set_size_request(120, -1)
+        self.stapm_scale.set_valign(Gtk.Align.CENTER)
+        self.stapm_scale.set_format_value_func(lambda scale, val: f"{val:.0f}W")
+        stapm_row.add_suffix(self.stapm_scale)
+        card.add(stapm_row)
 
-        self.power_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 25, 120, 5)
-        self.power_scale.set_value(65)
-        self.power_scale.set_draw_value(True)
-        self.power_scale.set_value_pos(Gtk.PositionType.LEFT)
-        self.power_scale.set_size_request(100, -1)
-        self.power_scale.set_format_value_func(lambda scale, val: f"{val:.0f}W")
-        power_box.append(self.power_scale)
+        # Fast Limit (Burst Power)
+        fast_row = Adw.ActionRow()
+        fast_row.set_title("Fast Limit (Burst)")
+        fast_row.set_subtitle("Kurzzeit-Boost")
 
-        power_row.add_suffix(power_box)
-        card.add(power_row)
+        self.fast_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 25, 150, 5)
+        self.fast_scale.set_value(80)
+        self.fast_scale.set_draw_value(True)
+        self.fast_scale.set_value_pos(Gtk.PositionType.LEFT)
+        self.fast_scale.set_size_request(120, -1)
+        self.fast_scale.set_valign(Gtk.Align.CENTER)
+        self.fast_scale.set_format_value_func(lambda scale, val: f"{val:.0f}W")
+        fast_row.add_suffix(self.fast_scale)
+        card.add(fast_row)
+
+        # Slow Limit
+        slow_row = Adw.ActionRow()
+        slow_row.set_title("Slow Limit")
+        slow_row.set_subtitle("Mittelfristige TDP")
+
+        self.slow_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 25, 120, 5)
+        self.slow_scale.set_value(65)
+        self.slow_scale.set_draw_value(True)
+        self.slow_scale.set_value_pos(Gtk.PositionType.LEFT)
+        self.slow_scale.set_size_request(120, -1)
+        self.slow_scale.set_valign(Gtk.Align.CENTER)
+        self.slow_scale.set_format_value_func(lambda scale, val: f"{val:.0f}W")
+        slow_row.add_suffix(self.slow_scale)
+        card.add(slow_row)
 
         # Temp Limit
         temp_row = Adw.ActionRow()
         temp_row.set_title("Temp Limit")
-        temp_row.set_subtitle("80-100°C")
-
-        temp_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        temp_box.set_valign(Gtk.Align.CENTER)
+        temp_row.set_subtitle("Max CPU Temperatur")
 
         self.temp_limit_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 80, 100, 1)
         self.temp_limit_scale.set_value(95)
         self.temp_limit_scale.set_draw_value(True)
         self.temp_limit_scale.set_value_pos(Gtk.PositionType.LEFT)
-        self.temp_limit_scale.set_size_request(100, -1)
+        self.temp_limit_scale.set_size_request(120, -1)
+        self.temp_limit_scale.set_valign(Gtk.Align.CENTER)
         self.temp_limit_scale.set_format_value_func(lambda scale, val: f"{val:.0f}°C")
-        temp_box.append(self.temp_limit_scale)
-
-        temp_row.add_suffix(temp_box)
+        temp_row.add_suffix(self.temp_limit_scale)
         card.add(temp_row)
 
         # Curve Optimizer (Undervolting)
         co_row = Adw.ActionRow()
-        co_row.set_title("CPU Undervolt")
-        co_row.set_subtitle("-30 bis +10 (negativ = weniger Spannung)")
-
-        co_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        co_box.set_valign(Gtk.Align.CENTER)
+        co_row.set_title("CPU Undervolt (CO)")
+        co_row.set_subtitle("Negativ = weniger Spannung")
 
         self.co_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -30, 10, 1)
         self.co_scale.set_value(0)
         self.co_scale.set_draw_value(True)
         self.co_scale.set_value_pos(Gtk.PositionType.LEFT)
-        self.co_scale.set_size_request(100, -1)
-        self.co_scale.add_mark(0, Gtk.PositionType.BOTTOM, "0")
-        self.co_scale.add_mark(-15, Gtk.PositionType.BOTTOM, "-15")
-        co_box.append(self.co_scale)
-
-        co_row.add_suffix(co_box)
+        self.co_scale.set_size_request(120, -1)
+        self.co_scale.set_valign(Gtk.Align.CENTER)
+        self.co_scale.add_mark(0, Gtk.PositionType.BOTTOM, None)
+        co_row.add_suffix(self.co_scale)
         card.add(co_row)
 
         # iGPU Curve Optimizer
         cogfx_row = Adw.ActionRow()
-        cogfx_row.set_title("iGPU Undervolt")
-        cogfx_row.set_subtitle("-30 bis +10")
-
-        cogfx_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        cogfx_box.set_valign(Gtk.Align.CENTER)
+        cogfx_row.set_title("iGPU Undervolt (CO)")
+        cogfx_row.set_subtitle("Negativ = weniger Spannung")
 
         self.cogfx_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -30, 10, 1)
         self.cogfx_scale.set_value(0)
         self.cogfx_scale.set_draw_value(True)
         self.cogfx_scale.set_value_pos(Gtk.PositionType.LEFT)
-        self.cogfx_scale.set_size_request(100, -1)
-        cogfx_box.append(self.cogfx_scale)
-
-        cogfx_row.add_suffix(cogfx_box)
+        self.cogfx_scale.set_size_request(120, -1)
+        self.cogfx_scale.set_valign(Gtk.Align.CENTER)
+        self.cogfx_scale.add_mark(0, Gtk.PositionType.BOTTOM, None)
+        cogfx_row.add_suffix(self.cogfx_scale)
         card.add(cogfx_row)
 
         # Apply button
@@ -362,16 +411,18 @@ class FanControlWindow(Adw.ApplicationWindow):
 
     def apply_tuning(self, button):
         """Apply ryzenadj tuning settings"""
-        power = int(self.power_scale.get_value()) * 1000  # Convert to mW
+        stapm = int(self.stapm_scale.get_value()) * 1000  # Convert to mW
+        fast = int(self.fast_scale.get_value()) * 1000
+        slow = int(self.slow_scale.get_value()) * 1000
         temp = int(self.temp_limit_scale.get_value())
         co = int(self.co_scale.get_value())
         cogfx = int(self.cogfx_scale.get_value())
 
         # Build command
         args = [
-            f"--stapm-limit={power}",
-            f"--fast-limit={power}",
-            f"--slow-limit={power}",
+            f"--stapm-limit={stapm}",
+            f"--fast-limit={fast}",
+            f"--slow-limit={slow}",
             f"--tctl-temp={temp}",
         ]
 
@@ -426,6 +477,13 @@ class FanControlWindow(Adw.ApplicationWindow):
             self.rampup_entry.set_text(rampup)
         if rampdown:
             self.rampdown_entry.set_text(rampdown)
+
+        # GPU Performance Level
+        gpu_level = self.read_file("/sys/class/drm/card1/device/power_dpm_force_performance_level")
+        if gpu_level:
+            levels = ["auto", "low", "high"]
+            if gpu_level in levels:
+                self.gpu_level_row.set_selected(levels.index(gpu_level))
 
         return True
 
