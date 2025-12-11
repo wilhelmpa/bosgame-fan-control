@@ -99,6 +99,9 @@ class FanControlWindow(Adw.ApplicationWindow):
             self.tuning_card = self.create_tuning_card()
             content.append(self.tuning_card)
 
+        # Flag for loading saved settings on first refresh
+        self._first_load = True
+
         # Initial load
         self.refresh_all(None)
 
@@ -133,9 +136,9 @@ class FanControlWindow(Adw.ApplicationWindow):
             return False
 
     def run_ryzenadj(self, *args):
-        """Run ryzenadj with pkexec"""
+        """Run ryzenadj with sudo (no password via sudoers)"""
         try:
-            cmd = ["pkexec", "ryzenadj"] + list(args)
+            cmd = ["sudo", "ryzenadj"] + list(args)
             result = subprocess.run(cmd, capture_output=True, text=True)
             if "Sucessfully" in result.stdout or "Successfully" in result.stdout:
                 return True
@@ -146,6 +149,52 @@ class FanControlWindow(Adw.ApplicationWindow):
         except Exception as e:
             self.show_error("Fehler", str(e))
             return False
+
+    def save_tuning_config(self, stapm, fast, slow, temp, co, cogfx, gpu_level):
+        """Save tuning settings to config file"""
+        try:
+            config_path = "/etc/bosgame-fan-control.conf"
+            # Read existing config
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path, "r") as f:
+                    for line in f:
+                        if "=" in line and not line.strip().startswith("#"):
+                            key, val = line.strip().split("=", 1)
+                            config[key] = val.strip('"')
+
+            # Update with tuning settings
+            config["STAPM_LIMIT"] = str(stapm)
+            config["FAST_LIMIT"] = str(fast)
+            config["SLOW_LIMIT"] = str(slow)
+            config["TEMP_LIMIT"] = str(temp)
+            config["CPU_CO"] = str(co)
+            config["GPU_CO"] = str(cogfx)
+            config["GPU_LEVEL"] = gpu_level
+
+            # Write back
+            cmd = ["sudo", "tee", config_path]
+            content = "\n".join([f'{k}="{v}"' for k, v in config.items()]) + "\n"
+            subprocess.run(cmd, input=content, text=True, capture_output=True)
+            return True
+        except Exception as e:
+            self.show_error("Fehler beim Speichern", str(e))
+            return False
+
+    def load_tuning_config(self):
+        """Load tuning settings from config file"""
+        config = {}
+        config_path = "/etc/bosgame-fan-control.conf"
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r") as f:
+                    for line in f:
+                        if "=" in line and not line.strip().startswith("#"):
+                            key, val = line.strip().split("=", 1)
+                            config[key] = val.strip('"')
+            except:
+                pass
+        return config
 
     def show_error(self, title, message):
         """Show error dialog"""
@@ -398,6 +447,17 @@ class FanControlWindow(Adw.ApplicationWindow):
         cogfx_row.add_suffix(self.cogfx_scale)
         card.add(cogfx_row)
 
+        # Save checkbox
+        save_row = Adw.ActionRow()
+        save_row.set_title("Beim Booten laden")
+        save_row.set_subtitle("Einstellungen speichern und automatisch anwenden")
+
+        self.save_tuning_switch = Gtk.Switch()
+        self.save_tuning_switch.set_valign(Gtk.Align.CENTER)
+        save_row.add_suffix(self.save_tuning_switch)
+        save_row.set_activatable_widget(self.save_tuning_switch)
+        card.add(save_row)
+
         # Apply button
         apply_row = Adw.ActionRow()
         apply_btn = Gtk.Button(label="Tuning anwenden")
@@ -418,6 +478,10 @@ class FanControlWindow(Adw.ApplicationWindow):
         co = int(self.co_scale.get_value())
         cogfx = int(self.cogfx_scale.get_value())
 
+        # Get GPU level
+        levels = ["auto", "low", "high"]
+        gpu_level = levels[self.gpu_level_row.get_selected()]
+
         # Build command
         args = [
             f"--stapm-limit={stapm}",
@@ -432,7 +496,16 @@ class FanControlWindow(Adw.ApplicationWindow):
         if cogfx != 0:
             args.append(f"--set-cogfx={cogfx}")
 
-        self.run_ryzenadj(*args)
+        success = self.run_ryzenadj(*args)
+
+        # Save settings if checkbox is checked
+        if success and self.save_tuning_switch.get_active():
+            self.save_tuning_config(
+                int(self.stapm_scale.get_value()),
+                int(self.fast_scale.get_value()),
+                int(self.slow_scale.get_value()),
+                temp, co, cogfx, gpu_level
+            )
 
     def refresh_all(self, button):
         """Refresh all values"""
@@ -484,6 +557,31 @@ class FanControlWindow(Adw.ApplicationWindow):
             levels = ["auto", "low", "high"]
             if gpu_level in levels:
                 self.gpu_level_row.set_selected(levels.index(gpu_level))
+
+        # Load saved tuning settings (only on first load)
+        if self.has_ryzenadj and hasattr(self, '_first_load'):
+            config = self.load_tuning_config()
+            if config.get("STAPM_LIMIT"):
+                try:
+                    self.stapm_scale.set_value(int(config["STAPM_LIMIT"]))
+                    self.save_tuning_switch.set_active(True)
+                except: pass
+            if config.get("FAST_LIMIT"):
+                try: self.fast_scale.set_value(int(config["FAST_LIMIT"]))
+                except: pass
+            if config.get("SLOW_LIMIT"):
+                try: self.slow_scale.set_value(int(config["SLOW_LIMIT"]))
+                except: pass
+            if config.get("TEMP_LIMIT"):
+                try: self.temp_limit_scale.set_value(int(config["TEMP_LIMIT"]))
+                except: pass
+            if config.get("CPU_CO"):
+                try: self.co_scale.set_value(int(config["CPU_CO"]))
+                except: pass
+            if config.get("GPU_CO"):
+                try: self.cogfx_scale.set_value(int(config["GPU_CO"]))
+                except: pass
+            del self._first_load
 
         return True
 

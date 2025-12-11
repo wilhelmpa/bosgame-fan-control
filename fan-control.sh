@@ -84,6 +84,59 @@ apply_settings() {
     echo "Fan control settings applied successfully"
 }
 
+# Apply ryzenadj tuning settings
+apply_tuning() {
+    if [ -z "$STAPM_LIMIT" ]; then
+        echo "No tuning settings found, skipping ryzenadj"
+        return
+    fi
+
+    echo "Applying ryzenadj tuning settings..."
+
+    # Build ryzenadj command
+    RYZENADJ_ARGS=""
+
+    if [ -n "$STAPM_LIMIT" ]; then
+        STAPM_MW=$((STAPM_LIMIT * 1000))
+        RYZENADJ_ARGS="$RYZENADJ_ARGS --stapm-limit=$STAPM_MW"
+    fi
+
+    if [ -n "$FAST_LIMIT" ]; then
+        FAST_MW=$((FAST_LIMIT * 1000))
+        RYZENADJ_ARGS="$RYZENADJ_ARGS --fast-limit=$FAST_MW"
+    fi
+
+    if [ -n "$SLOW_LIMIT" ]; then
+        SLOW_MW=$((SLOW_LIMIT * 1000))
+        RYZENADJ_ARGS="$RYZENADJ_ARGS --slow-limit=$SLOW_MW"
+    fi
+
+    if [ -n "$TEMP_LIMIT" ]; then
+        RYZENADJ_ARGS="$RYZENADJ_ARGS --tctl-temp=$TEMP_LIMIT"
+    fi
+
+    if [ -n "$CPU_CO" ] && [ "$CPU_CO" != "0" ]; then
+        RYZENADJ_ARGS="$RYZENADJ_ARGS --set-coall=$CPU_CO"
+    fi
+
+    if [ -n "$GPU_CO" ] && [ "$GPU_CO" != "0" ]; then
+        RYZENADJ_ARGS="$RYZENADJ_ARGS --set-cogfx=$GPU_CO"
+    fi
+
+    if [ -n "$RYZENADJ_ARGS" ]; then
+        echo "  Running: ryzenadj $RYZENADJ_ARGS"
+        /usr/bin/ryzenadj $RYZENADJ_ARGS 2>&1 | grep -v "no compatible"
+    fi
+
+    # GPU Performance Level
+    if [ -n "$GPU_LEVEL" ]; then
+        echo "$GPU_LEVEL" > /sys/class/drm/card1/device/power_dpm_force_performance_level 2>/dev/null
+        echo "  GPU Performance Level: $GPU_LEVEL"
+    fi
+
+    echo "Tuning settings applied"
+}
+
 # Main
 case "$1" in
     start)
@@ -91,6 +144,7 @@ case "$1" in
         set_permissions
         load_config
         apply_settings
+        apply_tuning
         ;;
     status)
         if [ -d "$SYSFS_BASE" ]; then
