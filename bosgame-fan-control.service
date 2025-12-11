@@ -1,0 +1,12 @@
+[Unit]
+Description=Bosgame M5 Fan Control
+After=systemd-modules-load.service
+Requires=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/fan-control.sh start
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

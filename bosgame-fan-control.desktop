@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Bosgame M5 Fan Control
+GenericName=Fan Control
+Comment=Control fan speed and power modes on Bosgame M5
+Exec=/usr/local/bin/bosgame-fan-control
+Icon=preferences-system-power
+Terminal=false
+Type=Application
+Categories=System;Settings;HardwareSettings;
+Keywords=fan;control;cooling;temperature;bosgame;
+StartupNotify=true
