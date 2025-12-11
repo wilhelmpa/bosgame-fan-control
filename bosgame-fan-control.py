@@ -9,7 +9,8 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib, Gio
 import os
-import glob
+import subprocess
+import shutil
 
 SYSFS_BASE = "/sys/class/ec_su_axb35"
 
@@ -38,7 +39,10 @@ class FanControlWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.set_title("Bosgame M5 Fan Control")
-        self.set_default_size(500, 850)
+        self.set_default_size(500, 950)
+
+        # Check if ryzenadj is available
+        self.has_ryzenadj = shutil.which("ryzenadj") is not None
 
         # Main box
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -86,6 +90,11 @@ class FanControlWindow(Adw.ApplicationWindow):
         self.curve_card = self.create_curve_card()
         content.append(self.curve_card)
 
+        # Ryzenadj tuning card (if available)
+        if self.has_ryzenadj:
+            self.tuning_card = self.create_tuning_card()
+            content.append(self.tuning_card)
+
         # Initial load
         self.refresh_all(None)
 
@@ -115,6 +124,21 @@ class FanControlWindow(Adw.ApplicationWindow):
             self.show_error("Keine Berechtigung",
                 "Führe aus:\nsudo /usr/local/bin/fan-control.sh start")
             return False
+        except Exception as e:
+            self.show_error("Fehler", str(e))
+            return False
+
+    def run_ryzenadj(self, *args):
+        """Run ryzenadj with pkexec"""
+        try:
+            cmd = ["pkexec", "ryzenadj"] + list(args)
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if "Sucessfully" in result.stdout or "Successfully" in result.stdout:
+                return True
+            if result.returncode != 0:
+                self.show_error("ryzenadj Fehler", result.stderr or "Unbekannter Fehler")
+                return False
+            return True
         except Exception as e:
             self.show_error("Fehler", str(e))
             return False
@@ -242,6 +266,122 @@ class FanControlWindow(Adw.ApplicationWindow):
         card.add(apply_row)
 
         return card
+
+    def create_tuning_card(self):
+        """Create CPU/GPU tuning card with ryzenadj"""
+        card = Adw.PreferencesGroup()
+        card.set_title("Power Tuning (ryzenadj)")
+        card.set_description("Einstellungen werden bei Neustart zurückgesetzt")
+
+        # Power Limit (STAPM)
+        power_row = Adw.ActionRow()
+        power_row.set_title("Power Limit (TDP)")
+        power_row.set_subtitle("25-120W")
+
+        power_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        power_box.set_valign(Gtk.Align.CENTER)
+
+        self.power_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 25, 120, 5)
+        self.power_scale.set_value(65)
+        self.power_scale.set_draw_value(True)
+        self.power_scale.set_value_pos(Gtk.PositionType.LEFT)
+        self.power_scale.set_size_request(100, -1)
+        self.power_scale.set_format_value_func(lambda scale, val: f"{val:.0f}W")
+        power_box.append(self.power_scale)
+
+        power_row.add_suffix(power_box)
+        card.add(power_row)
+
+        # Temp Limit
+        temp_row = Adw.ActionRow()
+        temp_row.set_title("Temp Limit")
+        temp_row.set_subtitle("80-100°C")
+
+        temp_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        temp_box.set_valign(Gtk.Align.CENTER)
+
+        self.temp_limit_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 80, 100, 1)
+        self.temp_limit_scale.set_value(95)
+        self.temp_limit_scale.set_draw_value(True)
+        self.temp_limit_scale.set_value_pos(Gtk.PositionType.LEFT)
+        self.temp_limit_scale.set_size_request(100, -1)
+        self.temp_limit_scale.set_format_value_func(lambda scale, val: f"{val:.0f}°C")
+        temp_box.append(self.temp_limit_scale)
+
+        temp_row.add_suffix(temp_box)
+        card.add(temp_row)
+
+        # Curve Optimizer (Undervolting)
+        co_row = Adw.ActionRow()
+        co_row.set_title("CPU Undervolt")
+        co_row.set_subtitle("-30 bis +10 (negativ = weniger Spannung)")
+
+        co_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        co_box.set_valign(Gtk.Align.CENTER)
+
+        self.co_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -30, 10, 1)
+        self.co_scale.set_value(0)
+        self.co_scale.set_draw_value(True)
+        self.co_scale.set_value_pos(Gtk.PositionType.LEFT)
+        self.co_scale.set_size_request(100, -1)
+        self.co_scale.add_mark(0, Gtk.PositionType.BOTTOM, "0")
+        self.co_scale.add_mark(-15, Gtk.PositionType.BOTTOM, "-15")
+        co_box.append(self.co_scale)
+
+        co_row.add_suffix(co_box)
+        card.add(co_row)
+
+        # iGPU Curve Optimizer
+        cogfx_row = Adw.ActionRow()
+        cogfx_row.set_title("iGPU Undervolt")
+        cogfx_row.set_subtitle("-30 bis +10")
+
+        cogfx_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        cogfx_box.set_valign(Gtk.Align.CENTER)
+
+        self.cogfx_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -30, 10, 1)
+        self.cogfx_scale.set_value(0)
+        self.cogfx_scale.set_draw_value(True)
+        self.cogfx_scale.set_value_pos(Gtk.PositionType.LEFT)
+        self.cogfx_scale.set_size_request(100, -1)
+        cogfx_box.append(self.cogfx_scale)
+
+        cogfx_row.add_suffix(cogfx_box)
+        card.add(cogfx_row)
+
+        # Apply button
+        apply_row = Adw.ActionRow()
+        apply_btn = Gtk.Button(label="Tuning anwenden")
+        apply_btn.add_css_class("suggested-action")
+        apply_btn.set_valign(Gtk.Align.CENTER)
+        apply_btn.connect("clicked", self.apply_tuning)
+        apply_row.add_suffix(apply_btn)
+        card.add(apply_row)
+
+        return card
+
+    def apply_tuning(self, button):
+        """Apply ryzenadj tuning settings"""
+        power = int(self.power_scale.get_value()) * 1000  # Convert to mW
+        temp = int(self.temp_limit_scale.get_value())
+        co = int(self.co_scale.get_value())
+        cogfx = int(self.cogfx_scale.get_value())
+
+        # Build command
+        args = [
+            f"--stapm-limit={power}",
+            f"--fast-limit={power}",
+            f"--slow-limit={power}",
+            f"--tctl-temp={temp}",
+        ]
+
+        if co != 0:
+            args.append(f"--set-coall={co}")
+
+        if cogfx != 0:
+            args.append(f"--set-cogfx={cogfx}")
+
+        self.run_ryzenadj(*args)
 
     def refresh_all(self, button):
         """Refresh all values"""
