@@ -25,6 +25,11 @@ TEMP_SENSORS = [
     {"path": "/sys/class/hwmon/hwmon5/temp1_input", "name": "Ethernet", "divisor": 1000},
 ]
 
+# Power sensors (in microwatts)
+POWER_SENSORS = [
+    {"path": "/sys/devices/pci0000:00/0000:00:08.1/0000:c6:00.0/hwmon/hwmon3/power1_average", "name": "APU Power", "divisor": 1000000},
+]
+
 class FanControlApp(Adw.Application):
     def __init__(self):
         super().__init__(application_id="org.bosgame.fancontrol",
@@ -74,6 +79,10 @@ class FanControlWindow(Adw.ApplicationWindow):
         # Temperature card with all sensors
         self.temp_card, self.temp_labels = self.create_temp_card()
         content.append(self.temp_card)
+
+        # Power display card
+        self.power_display_card, self.power_labels = self.create_power_display_card()
+        content.append(self.power_display_card)
 
         # Fan cards in a more compact layout
         self.fan_cards = {}
@@ -222,6 +231,27 @@ class FanControlWindow(Adw.ApplicationWindow):
                 temp_labels[sensor["path"]] = {"label": label, "divisor": sensor["divisor"]}
 
         return card, temp_labels
+
+    def create_power_display_card(self):
+        """Create power display card"""
+        card = Adw.PreferencesGroup()
+        card.set_title("Leistung")
+
+        power_labels = {}
+
+        for sensor in POWER_SENSORS:
+            if os.path.exists(sensor["path"]):
+                row = Adw.ActionRow()
+                row.set_title(sensor["name"])
+
+                label = Gtk.Label(label="--W")
+                label.add_css_class("title-4")
+                row.add_suffix(label)
+
+                card.add(row)
+                power_labels[sensor["path"]] = {"label": label, "divisor": sensor["divisor"]}
+
+        return card, power_labels
 
     def create_fan_card(self, fan_id, fan_name):
         """Create a fan control card"""
@@ -519,6 +549,16 @@ class FanControlWindow(Adw.ApplicationWindow):
                 except:
                     info["label"].set_label("--°C")
 
+        # Power
+        for path, info in self.power_labels.items():
+            val = self.read_file(path)
+            if val:
+                try:
+                    power = int(val) / info["divisor"]
+                    info["label"].set_label(f"{power:.1f}W")
+                except:
+                    info["label"].set_label("--W")
+
         # Fans
         for fan_id, card in self.fan_cards.items():
             rpm = self.read_sysfs(f"{fan_id}/rpm")
@@ -586,7 +626,7 @@ class FanControlWindow(Adw.ApplicationWindow):
         return True
 
     def auto_refresh(self):
-        """Auto-refresh callback - only temps and RPM"""
+        """Auto-refresh callback - only temps, power and RPM"""
         # All temperatures
         for path, info in self.temp_labels.items():
             val = self.read_file(path)
@@ -594,6 +634,16 @@ class FanControlWindow(Adw.ApplicationWindow):
                 try:
                     temp = int(val) / info["divisor"]
                     info["label"].set_label(f"{temp:.0f}°C")
+                except:
+                    pass
+
+        # Power
+        for path, info in self.power_labels.items():
+            val = self.read_file(path)
+            if val:
+                try:
+                    power = int(val) / info["divisor"]
+                    info["label"].set_label(f"{power:.1f}W")
                 except:
                     pass
 
